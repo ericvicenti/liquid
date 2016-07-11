@@ -1,4 +1,4 @@
-/**
+  /**
  * @flow
  */
 
@@ -24,7 +24,7 @@ import codePush from "react-native-code-push";
 const dismissKeyboard = require('dismissKeyboard');
 import { createStore, combineReducers } from 'redux';
 import { Provider, connect } from 'react-redux';
-AsyncStorage.clear();
+// AsyncStorage.clear();
 
 const stringify = require('json-stable-stringify');
 const {CardStack, Header, StateUtils} = NavigationExperimental;
@@ -72,6 +72,7 @@ const LiquidStyles2 = StyleSheet.create({
 
 
 const PUSH_ACTIONS = [
+  'ADD_OBJECT_KEY',
   'CREATE',
   'BOOKMARK',
 ];
@@ -92,6 +93,7 @@ function NavState(state = {
   switch (type) {
     case 'BACK':
     case 'CREATE_BOOKMARK':
+    case 'ADD_KEY_TO_OBJECT':
       return StateUtils.pop(state);
     case 'SAVE':
       return {
@@ -142,6 +144,7 @@ const BUILT_IN_BOOKMARKS = {
 
   types: Object.keys(BUILT_IN_TYPES).map(type => ({
     __nodeType: 'ref',
+    bookmark: type,
     key: makeHash(stringify(BUILT_IN_TYPES[type])),
   })),
 
@@ -194,57 +197,110 @@ const LiquidAppReducer = (state, action) => {
     bookmarks: Bookmarks,
     objects: Objects,
   })(state, action);
-  if (newState === state) {
-    return state;
-  }
   const {bookmarks, objects} = newState;
   switch (action.type) {
-    case 'CREATE_BOOKMARK':
-      // ookmarks
+    case 'CREATE_BOOKMARK': {
+      const value = null;
+      const stringValue = stringify(value);
+      const key = makeHash(stringValue);
+      const bookmarkName = newState.objects[newState.bookmarks.__bookmarkNameDraft];
+      const route = {
+        key: `BOOKMARK-${Date.now()}`,
+        state: {
+          bookmark: bookmarkName,
+        },
+        type: 'BOOKMARK',
+      };
+      return {
+        ...newState,
+        bookmarks: {
+          ...newState.bookmarks,
+          [bookmarkName]: key,
+          __bookmarkNameDraft: null,
+        },
+        objects: {
+          ...newState.objects,
+          [key]: value,
+        },
+        navigationState: StateUtils.push(newState.navigationState, route),
+      };
       return newState;
-    case 'SET_BOOKMARK_NAME_DRAFT':
+    }
+    case 'ADD_KEY_TO_OBJECT': {
+      const {bookmark} = action;
+      
+      const newKeyName = newState.objects[newState.bookmarks.__keyNameDraft];
+      const oldObject = newState.objects[newState.bookmarks[bookmark]];
+      const newObject = {
+        ...oldObject,
+        [newKeyName]: null,
+      };
+      const stringValue = stringify(newObject);
+      const key = makeHash(stringValue);
+      return {
+        ...newState,
+        bookmarks: {
+          ...newState.bookmarks,
+          __keyNameDraft: null,
+          [bookmark]: key,
+        },
+        objects: {
+          ...newState.objects,
+          [key]: newObject,
+        },
+      };      
+    }
+    case 'SET_BOOKMARK_VALUE': {
+      const {address, value, bookmark} = action;
+      const oldValue = newState.objects[newState.bookmarks[bookmark]];
+      let newValue = value;
+      if (address) {
+        address.forEach((a, i) => {
+          let someV = oldValue; //todo: look up
+          let subValue = newValue;
+          if (someV instanceof Array) {
+            newValue = [...someV];
+          } else {
+            newValue = {...someV};
+          }
+          newValue[a] = subValue;
+        });
+      }
+      const stringValue = stringify(newValue);
+      const key = makeHash(stringValue);
 
-      action.name
-      debugger;
-      return newState;
-    case 'SAVE':
-      // const {bookmarks, objects} = newState;
-      return newState;
-      // let value = drafts[action.nodeType];
-      // if (value == null) {
-      //   value = primitiveValueDefault(action.nodeType);
-      // }
-      // const stringValue = stringify(value);
-      // const key = makeHash(stringValue);
-      // const name = drafts.bookmark;
-      // return {
-      //   ...newState,
-      //   bookmarks: {
-      //     ...bookmarks,
-      //     [name]: key,
-      //   },
-      //   objects: {
-      //     ...objects,
-      //     [key]: value,
-      //   },
-      // };
+      return {
+        ...newState,
+        bookmarks: {
+          ...newState.bookmarks,
+          [bookmark]: key,
+        },
+        objects: {
+          ...newState.objects,
+          [key]: newValue,
+        },
+      };
+    }
     default:
       return newState;
   }
 }
 
 const Actions = {
-  setBookmarkNameDraft(name) {
-    return {type: 'SET_BOOKMARK_NAME_DRAFT', name};
+  addKeyToObject({address, bookmark}) {
+    return {type: 'ADD_KEY_TO_OBJECT', address, bookmark};
   },
-  openBookmark(name, editLocation) {
-    return {type: 'BOOKMARK', name};
+  setBookmarkValue({bookmark, address, value}) {
+    return {type: 'SET_BOOKMARK_VALUE', bookmark, address, value};
+  },
+  openBookmark({bookmark, address}) {
+    return {type: 'BOOKMARK', address, bookmark};
+  },
+  addObjectKey({bookmark, address}) {
+    return {type: 'ADD_OBJECT_KEY', address, bookmark};
   },
   back() {
     return {type: 'BACK'};
-  },
-  save(nodeType) {
-    return {type: 'SAVE', nodeType};
   },
   createBookmark() {
     return {type: 'CREATE_BOOKMARK'};
@@ -318,41 +374,54 @@ function dereference(store, thing) {
   if (thing instanceof Array) {
     return thing.map(subThing => dereference(store, subThing));
   }
-  if (thing.__nodeType === 'ref') {
-    return store.objects[thing.key];
+  if (thing && thing.__nodeType === 'ref') {
+    return {
+      ...thing,
+      value: store.objects[thing.key],
+    };
   }
   return thing;
 }
 
-function dereferenceBookmark(store, name) {
+function dereferenceBookmark(store, name, address) {
   const key = store.bookmarks[name];
-  return dereference(store, store.objects[key]);
+  let value = dereference(store, store.objects[key]);
+  if (address) {
+    address.forEach((a) => {
+      value = value[a];
+    });
+  }
+  return value;
 }
 
-// const CreateScene = connect(
-//   store => ({
-//     types: dereferenceBookmark(store, 'types'),
-//   }),
-//   dispatch => ({
-//     createWithType: type => dispatch(Actions.openBookmark(`drafts/${type}`)),
-//   }),
-// )(({createWithType, types}) => {
-//   return (
-//     <ListSceneWithFilter
-//       rows={types.map(({color, nativeType, name, icon}) => ({
-//         view:
-//           <AwesomeRow
-//             key={nativeType}
-//             onPress={() => createWithType(`primitive_${nativeType}`)}
-//             label={`New ${name}`}
-//             icon={icon}
-//             color={color}
-//           />,
-//         searchString: nativeType,
-//       }))}
-//     />
-//   );
-// });
+function extractNativeValue(v) {
+  if (v && v.value !== undefined) {
+    return v.value;
+  }
+  return v;
+}
+
+const NullEditor = connect(
+  store => ({
+    types: dereferenceBookmark(store, 'types'),
+  }),
+)(({createWithType, onSet, types}) => {
+  return (
+    <ListSceneWithFilter
+      rows={types.map((type) => ({
+        view:
+          <AwesomeRow
+            key={type.key}
+            onPress={() => onSet({value: null, __nodeType: {key: type.key, bookmark: type.bookmark} })}
+            label={`New ${type.value.name}`}
+            icon={type.value.icon}
+            color={type.value.color}
+          />,
+        searchString: type.value.name+' '+type.bookmark,
+      }))}
+    />
+  );
+});
 
 const LightStyle = {
   text: {color: 'white', fontSize: 15},
@@ -366,27 +435,36 @@ const BooleanEditor = ({value, onSet}) => (
   <ScrollView style={[LiquidStyles.scrollView, {backgroundColor: 'white'}]}>
     <View style={{margin: 10, flexDirection: 'row', justifyContent: 'center',}}>
       <Switch
-        value={value}
+        value={extractNativeValue(value)}
         onValueChange={e => onSet(e)}
       />
-      <Text style={{fontSize: 20, width: 70, margin: 3, marginHorizontal: 10, color: '#4A6A9D'}}>{value ? 'True' : 'False'}</Text>
+      <Text style={{fontSize: 20, width: 70, margin: 3, marginHorizontal: 10, color: '#4A6A9D'}}>{extractNativeValue(value) ? 'True' : 'False'}</Text>
     </View>
   </ScrollView>
 );
 
-function getType(store, nodeType) {
-  return store.objects[store.bookmarks[nodeType]];
-}
+const DEFAULT_TYPE = {
+  color: '#999',
+  icon: null,
+};
 
 const ObjectEditor = connect(
   (store, {value}) => ({
-    rows: Object.keys(value).map(key => ({
-      type: getType(store, getNodeType(value[key])),
+    rows: Object.keys(value).sort().map(key => ({
+      type: DEFAULT_TYPE,
       value: value[key],
       key,
     })),
+  }),
+  (dispatch, {route}) => ({
+    addKey: () => dispatch(Actions.addObjectKey({bookmark: route.state.bookmark, address: route.state.address})),
+    openKey: (name) => {
+      let {address, bookmark} = route.state;
+      address = address || [];
+      dispatch(Actions.openBookmark({bookmark, address: [...address, name]}));
+    },
   })
-)(({rows, onSet}) => {
+)(({rows, onSet, openKey, addKey}) => {
   let things = [];
   if (rows.length) {
     things = rows.map(({value, type, key}) =>
@@ -394,7 +472,7 @@ const ObjectEditor = connect(
         label={`${key}: ${presentationStringify(value)}`}
         color={type.color}
         icon={type.icon}
-        onPress={() => {}}
+        onPress={() => openKey(key)}
       />
     );
   } else {
@@ -408,7 +486,60 @@ const ObjectEditor = connect(
   things.push(
     <AwesomeRow
       label="New Key"
-      onPress={() => {}}
+      onPress={() => addKey()}
+    />
+  )
+  return (
+    <ScrollView style={[LiquidStyles.scrollView, {backgroundColor: 'white'}]}>
+      {things}
+    </ScrollView>
+  );
+});
+
+const ArrayEditor = connect(
+  (store, {value}) => {
+    value = extractNativeValue(value) || [];
+    return {
+      value,
+      rows: value.map((item, index) => ({
+        type: DEFAULT_TYPE,
+        value: value[index],
+        index,
+      })),
+    };
+  },
+  (dispatch, {route}) => ({
+    addKey: () => dispatch(Actions.addObjectKey({bookmark: route.state.bookmark, address: route.state.address})),
+    openKey: (name) => {
+      let {address, bookmark} = route.state;
+      address = address || [];
+      dispatch(Actions.openBookmark({bookmark, address: [...address, name]}));
+    },
+  })
+)(({rows, value, onSet, openKey, addKey}) => {
+  let things = [];
+  if (rows.length) {
+    things = rows.map(({value, type, index}, i) =>
+      <AwesomeRow
+        key={'row'+i}
+        label={`${i}: ${presentationStringify(value)}`}
+        color={type.color}
+        icon={type.icon}
+        onPress={() => openKey(i)}
+      />
+    );
+  } else {
+    things.push(
+      <AwesomeRow
+        label="Object Empty"
+        color="#aaa"
+      />
+    )
+  }
+  things.push(
+    <AwesomeRow
+      label="Add Item"
+      onPress={() => onSet([...value, null])}
     />
   )
   return (
@@ -436,7 +567,7 @@ class StringEditor extends React.Component {
         onChange={(e) => {
           this.props.onSet(e.nativeEvent.text);
         }}>
-          <Text style={{fontSize: 18, color: '#9C664A'}}>{this.state ? this.props.value : " "}</Text>
+          <Text style={{fontSize: 18, color: '#9C664A'}}>{this.state ? extractNativeValue(this.props.value) : " "}</Text>
       </TextInput>
     </ScrollView>
   );
@@ -474,25 +605,38 @@ class NumberEditor extends React.Component {
           }
           this.props.onSet(val);
         }}>
-          <Text style={{fontSize: 18, color: '#70A04A'}}>{this.state ? this.props.value + ' ' : this.props.value}</Text>
+          <Text style={{fontSize: 18, color: '#70A04A'}}>{this.state ? extractNativeValue(this.props.value) + ' ' : extractNativeValue(this.props.value)}</Text>
       </TextInput>
     </ScrollView>
   );
 }
 
-function getEditorForType(type) {
+function getEditorForNativeType(type) {
   switch (type) {
-    case 'primitive_boolean':
+    case 'boolean':
       return BooleanEditor;
-    case 'primitive_string':
+    case 'string':
       return StringEditor;
-    case 'primitive_object':
+    case 'array':
+      return ArrayEditor;
+    case 'object':
       return ObjectEditor;
-    case 'primitive_number':
+    case 'number':
       return NumberEditor;
     default:
-      return () => <ErrorScene message={`There is no editor defined for the "${type}" type.`} />;
+      return null;
   }
+}
+
+function getEditorForType(nodeType) {
+  if (nodeType == null) {
+    return NullEditor;
+  }
+  const {nativeType} = nodeType;
+  if (nativeType && getEditorForNativeType(nativeType)) {
+    return getEditorForNativeType(nativeType);
+  }
+  return () => <ErrorScene message={`There is no editor defined for "${nodeType.name}" type.`} />;
 }
 
 const ErrorScene = ({message}) => (
@@ -501,123 +645,118 @@ const ErrorScene = ({message}) => (
   </View>
 );
 
-function primitiveValueDefault(nodeType, value) {
-  if (value != null) {
-    return value;
-  }
-  switch (nodeType) {
-    case 'primitive_string':
-      return '';
-    case 'primitive_boolean':
-      return false;
-    case 'primitive_number':
-      return 0;
-    case 'primitive_array':
-      return [];
-    case 'primitive_object':
-      return {};
-    default:
-      return {__nodeType: nodeType};
-  }
-}
 
-// const CreateWithTypeScene = connect(
-//   ({drafts}, {route}) => ({
-//     value: drafts[route.state.nodeType],
-//   }),
-//   dispatch => ({
-//     setDraftState: (nodeType, a) => dispatch(Actions.setDraftState(nodeType, a)),
-//   }),
-// )(({route, value, setDraftState}) => {
-//   const {nodeType} = route.state;
-//   const Editor = getEditorForType(nodeType);
-//   return (
-//     <Editor
-//       value={primitiveValueDefault(nodeType, value)}
-//       onSet={(a) => setDraftState(nodeType, a)}
-//     />
-//   );
-// });
-
-function getNodeType(value) {
+function getNodeType(store, value) {
+  if (value == null) {
+    return null;
+  }
   if (typeof value !== 'object') {
-    return `primitive_${typeof value}`;
+    return dereferenceBookmark(store, `primitive_${typeof value}`);
   }
   if (value instanceof Array) {
-    return 'primitive_array'; //maybe?
+    return dereferenceBookmark(store, 'primitive_array');
+  }
+  if (value.__nodeType && value.__nodeType.key) {
+    const {bookmark, key} = value.__nodeType;
+    return dereference(store, {
+      __nodeType: 'ref',
+      bookmark,
+      key,
+    }).value;
   }
   if (value.__nodeType) {
     return value.__nodeType;
   }
-  return 'primitive_object';//maybe
+  return dereferenceBookmark(store, 'primitive_object');
 }
 
 const BookmarkScene = connect(
-  ({bookmarks, objects}, {route}) => ({
-    value: objects[bookmarks[route.state.name]],
-  }),
-  dispatch => ({
-    updateBookmark: (nodeType, a) => dispatch(Actions.updateBookmark(nodeType, a)),
-  }),
-)(({route, value, updateBookmark}) => {
-  let nodeType = value && getNodeType(value);
-  let nodeValue = value;
-  if (!nodeValue) {
-    const pts = route.state.name.split('drafts/');
-    if (pts.length) { // this is a hacky way to parse the bookmark
-      nodeType = pts[1];
-      nodeValue = primitiveValueDefault(nodeType, nodeValue);
+  (store, {route}) => {
+    const {bookmarks, objects} = store;
+    let value = objects[bookmarks[route.state.bookmark]];
+    if (route.state.address) {
+      route.state.address.forEach(a => {
+        value = value[a];
+      });
     }
-  }
+    const nodeType = getNodeType(store, value);
+    return { value, nodeType };
+  },
+  (dispatch, {route}) => ({
+    updateValue: (value) => {
+      dispatch(Actions.setBookmarkValue({bookmark: route.state.bookmark, address: route.state.address, value}));
+    },
+  }),
+)(({route, value, nodeType, updateValue}) => {
   const Editor = getEditorForType(nodeType);
   return (
     <Editor
-      value={nodeValue}
+      value={value}
       route={route}
-      onSet={(a) => updateBookmark(nodeType, a)}
+      onSet={updateValue}
+    />
+  );
+});
+
+
+const AddObjectKeyScene = connect(
+  ({bookmarks, objects}, {route}) => ({
+    keyName: objects[bookmarks.__keyNameDraft],
+  }),
+  dispatch => ({
+    setKeyName: name => dispatch(Actions.setBookmarkValue({bookmark: '__keyNameDraft', value: name})),
+  }),
+)(({setKeyName, keyName}) => {
+  return (
+    <StringEditor
+      value={keyName}
+      placeholder="New Key on Object"
+      onSet={setKeyName}
     />
   );
 });
 
 const CreateBookmarkScene = connect(
-  (store, {route}) => ({
-    bookmarkName: store.bookmarks.bookmarkNameDraft,
+  ({bookmarks, objects}, {route}) => ({
+    bookmarkName: objects[bookmarks.__bookmarkNameDraft],
   }),
   dispatch => ({
-    setBookmarkNameDraft: name => dispatch(Actions.setBookmarkNameDraft(name)),
+    setDraftName: name => dispatch(Actions.setBookmarkValue({bookmark: '__bookmarkNameDraft', value: name})),
   }),
-)(({bookmarkName, setBookmarkNameDraft}) => {
+)(({bookmarkName, setDraftName}) => {
   return (
     <StringEditor
       value={bookmarkName}
       placeholder="New Bookmark Name"
-      onSet={value => setBookmarkNameDraft(value)}
+      onSet={setDraftName}
     />
   );
 });
 
 const BookmarksScene = connect(
   store => ({
-    bookmarks: store.bookmarks,
-    objects: store.objects,
+    rows: Object.keys(store.bookmarks).sort().map(name => {
+      const value = store.objects[store.bookmarks[name]];
+      const nodeType = getNodeType(store, value);
+      return {name, value, nodeType};
+    }),
   }),
   dispatch => ({
-    openBookmark: name => dispatch(Actions.openBookmark(name))
+    openBookmark: bookmark => dispatch(Actions.openBookmark({bookmark}))
   })
-)(({bookmarks, objects, openBookmark}) => (
+)(({rows, openBookmark}) => (
   <ListSceneWithFilter
-    rows={Object.keys(bookmarks).map(name => {
-      const object = objects[bookmarks[name]];
-      const nodeType = getNodeType(object);
-      const view =
+    rows={rows.map(({name, value}) => ({
+      view: (
         <AwesomeRow
           key={name}
-          label={`${name} : ${presentationStringify(object)}`}
+          label={`${name} : ${presentationStringify(value)}`}
           color={'#333'}
           onPress={() => openBookmark(name)}
-        />;
-      return {view, searchString: name};
-    })}
+        />
+      ),
+      searchString: name,
+    }))}
   />
 ));
 
@@ -625,6 +764,7 @@ const COMPONENT_FOR_ACTION = {
   HOME: BookmarksScene,
   CREATE: CreateBookmarkScene,
   BOOKMARK: BookmarkScene,
+  ADD_OBJECT_KEY: AddObjectKeyScene,
 };
 
 const HeaderButton = ({onPress, icon}) => {
@@ -662,14 +802,12 @@ const CreateBookmarkHeaderButton = connect(
   (dispatch, {route}) => ({
     createBookmark: () => dispatch(Actions.createBookmark()),
   }),
-)(({createBookmark}) => {
-  return (
-    <HeaderButton
-      icon="md-checkmark"
-      onPress={createBookmark}
-    />
-  );
-});
+)(({createBookmark}) => (
+  <HeaderButton
+    icon="md-checkmark"
+    onPress={createBookmark}
+  />
+));
 
 const LiquidRightHeader = ({route}) => (
   <View style={LiquidStyles.headerButtons}>
@@ -677,12 +815,27 @@ const LiquidRightHeader = ({route}) => (
   </View>
 );
 
+const CreateKeyHeaderButton = connect(
+  null,
+  (dispatch, {route}) => ({
+    createKey: () => dispatch(Actions.addKeyToObject({address: route.state.address, bookmark: route.state.bookmark})),
+  })
+)(({createKey}) => (
+  <HeaderButton
+    icon="md-checkmark"
+    onPress={createKey}
+  />
+));
+
 const HeaderButtons = ({route}) => {
   if (route.type === 'HOME') {
     return <CreateHeaderButton />;
   }
   if (route.type === 'CREATE') {
     return <CreateBookmarkHeaderButton route={route} />;
+  }
+  if (route.type === 'ADD_OBJECT_KEY') {
+    return <CreateKeyHeaderButton route={route} />
   }
   return null;
 };
@@ -708,7 +861,15 @@ function routeToTitle(route) {
     case 'CREATE':
       return 'New Bookmark:';
     case 'BOOKMARK':
-      return route.state.name;
+      let title = route.state.bookmark;
+      if (route.state.address) {
+        route.state.address.forEach(a => {
+          title = title + ': ' + a;
+        });
+      }
+      return title;
+    case 'ADD_OBJECT_KEY':
+      return 'New Key';
     default:
       return route.key;
   }
@@ -719,6 +880,18 @@ const LiquidTitle = ({route, onLayout}) => (
     {routeToTitle(route)}
   </Header.Title>
 );
+
+const LiquidBackButton = connect(
+  null,
+  dispatch => ({
+    onBack: () => dispatch(Actions.back()),
+  }),
+)(({onBack}) => (
+  <HeaderButton
+    icon="ios-arrow-back"
+    onPress={onBack}
+  />
+));
 
 import type {NavigationState} from 'NavigationTypeDefinition';
 
@@ -738,6 +911,7 @@ const LiquidMain = connect(
       <Header
         renderTitleComponent={({scene, onLayout}) => <LiquidTitle route={scene.route} onLayout={onLayout} />}
         renderRightComponent={({scene}) => <LiquidRightHeader route={scene.route} />}
+        renderLeftComponent={({scene, navigationState}) => navigationState.index === 0 ? null : <LiquidBackButton />}
         onNavigateBack={back}
         {...sceneProps}
       />
@@ -794,7 +968,7 @@ const LiquidStyles = StyleSheet.create({
   },
 });
 
-// AppRegistry.registerComponent('liquid', () => LiquidAppIconPicker);
+// AppRegistry.registerComponent('Liquid', () => LiquidAppIconPicker);
 AppRegistry.registerComponent('Liquid', () => LiquidApp);
 
 module.exports = LiquidApp;
